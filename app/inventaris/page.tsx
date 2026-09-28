@@ -1,4 +1,5 @@
-import { getItems, getStatusCounts } from "@/app/actions/item";
+import { getItems, getStatusCounts, getItemsNearingDepletion } from "@/app/actions/item";
+import { getReminderSetting } from "@/app/actions/reminder";
 import { getCurrentUser } from "@/lib/auth";
 import { redirect } from "next/navigation";
 import DashboardClient from "@/components/DashboardClient";
@@ -19,14 +20,22 @@ export default async function InventarisPage() {
     redirect("/");
   }
 
-  const [items, statusCounts] = await Promise.all([
+  const [items, statusCounts, nearingDepletion, reminderSetting] = await Promise.all([
     getItems(),
     getStatusCounts(),
+    getItemsNearingDepletion(),
+    getReminderSetting(),
   ]);
 
   return (
     <main className="flex flex-col min-h-screen">
-      <DashboardClient items={items} statusCounts={statusCounts} user={user} />
+      <DashboardClient
+        items={items}
+        statusCounts={statusCounts}
+        user={user}
+        nearingDepletionItems={nearingDepletion}
+        reminderSetting={reminderSetting}
+      />
       <BottomNav />
     </main>
   );

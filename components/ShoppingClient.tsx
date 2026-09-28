@@ -3,10 +3,19 @@
 import { useState, useTransition } from "react";
 import { Item, StockStatus } from "@/lib/types";
 import { checkoutItems } from "@/app/actions/shopping";
+import { formatRupiah, formatDateGroup } from "@/lib/utils";
 import StatusBadge from "@/components/ui/StatusBadge";
 import PrimaryButton from "@/components/ui/PrimaryButton";
 import EmptyState from "@/components/ui/EmptyState";
-import { Check, CheckCircle2, PartyPopper, CheckCheck } from "lucide-react";
+import {
+  Check,
+  CheckCircle2,
+  PartyPopper,
+  CheckCheck,
+  Share2,
+  Tag,
+  Wallet,
+} from "lucide-react";
 
 interface ShoppingClientProps {
   items: Item[];
@@ -19,6 +28,17 @@ export default function ShoppingClient({ items }: ShoppingClientProps) {
 
   const habisItems = items.filter((i) => i.status === StockStatus.HABIS);
   const menipisItems = items.filter((i) => i.status === StockStatus.MENIPIS);
+
+  // Calculate budget statistics
+  const totalCheckedPrice = Array.from(checkedIds).reduce((acc, id) => {
+    const item = items.find((i) => i.id === id);
+    return acc + (item?.estimatedPrice || 0);
+  }, 0);
+
+  const grandTotalPrice = items.reduce(
+    (acc, i) => acc + (i.estimatedPrice || 0),
+    0
+  );
 
   const toggleCheck = (id: string) => {
     setCheckedIds((prev) => {
@@ -49,6 +69,41 @@ export default function ShoppingClient({ items }: ShoppingClientProps) {
       setShowSuccess(true);
       setTimeout(() => setShowSuccess(false), 3500);
     });
+  };
+
+  // Generate WhatsApp message and open link
+  const handleShareWhatsApp = () => {
+    const dateStr = formatDateGroup(new Date());
+    let text = `🛒 *Daftar Belanja StokKu*\n📅 ${dateStr}\n\n`;
+
+    if (habisItems.length > 0) {
+      text += `🔴 *Habis (Prioritas):*\n`;
+      habisItems.forEach((item) => {
+        const priceStr =
+          item.estimatedPrice > 0 ? ` (~${formatRupiah(item.estimatedPrice)})` : "";
+        text += `• ${item.name}${priceStr}\n`;
+      });
+      text += `\n`;
+    }
+
+    if (menipisItems.length > 0) {
+      text += `🟡 *Menipis:*\n`;
+      menipisItems.forEach((item) => {
+        const priceStr =
+          item.estimatedPrice > 0 ? ` (~${formatRupiah(item.estimatedPrice)})` : "";
+        text += `• ${item.name}${priceStr}\n`;
+      });
+      text += `\n`;
+    }
+
+    if (grandTotalPrice > 0) {
+      text += `💰 *Estimasi Total:* ${formatRupiah(grandTotalPrice)}\n\n`;
+    }
+
+    text += `_Disusun otomatis via StokKu_`;
+
+    const url = `https://wa.me/?text=${encodeURIComponent(text)}`;
+    window.open(url, "_blank");
   };
 
   if (items.length === 0) {
@@ -123,15 +178,22 @@ export default function ShoppingClient({ items }: ShoppingClientProps) {
 
                 {/* Item info */}
                 <div className="flex-1 min-w-0">
-                  <span
-                    className={`text-sm font-bold block truncate transition-colors ${
-                      isChecked
-                        ? "line-through text-slate-400"
-                        : "text-slate-800"
-                    }`}
-                  >
-                    {item.name}
-                  </span>
+                  <div className="flex items-center gap-2">
+                    <span
+                      className={`text-sm font-bold block truncate transition-colors ${
+                        isChecked
+                          ? "line-through text-slate-400"
+                          : "text-slate-800"
+                      }`}
+                    >
+                      {item.name}
+                    </span>
+                    {item.estimatedPrice > 0 && (
+                      <span className="text-xs font-semibold text-emerald-700 shrink-0">
+                        {formatRupiah(item.estimatedPrice)}
+                      </span>
+                    )}
+                  </div>
                   {item.category && (
                     <span className="text-[11px] font-medium text-slate-500 block">
                       {item.category}
@@ -158,10 +220,51 @@ export default function ShoppingClient({ items }: ShoppingClientProps) {
         <div className="mb-4 p-4 rounded-2xl bg-emerald-50 border border-emerald-300 text-emerald-800 flex items-center gap-3 shadow-md animate-fade-in-up">
           <PartyPopper className="w-5 h-5 text-emerald-600 shrink-0" />
           <div className="text-xs font-semibold">
-            Belanja berhasil dicatat! Status barang yang dicentang kini kembali <b>Aman 🟢</b> dan riwayat restok telah diperbarui.
+            Belanja berhasil dicatat! Status barang yang dicentang kini kembali{" "}
+            <b>Aman 🟢</b> dan riwayat restok telah diperbarui.
           </div>
         </div>
       )}
+
+      {/* Budget Summary Card & Share Bar */}
+      <div className="glass rounded-2xl p-4 mb-5 border border-white/80 shadow-md">
+        <div className="flex items-center justify-between mb-3">
+          <div className="flex items-center gap-2">
+            <div className="w-8 h-8 rounded-xl bg-emerald-100 flex items-center justify-center text-emerald-600">
+              <Wallet className="w-4 h-4" />
+            </div>
+            <div>
+              <span className="text-[11px] font-bold text-slate-400 block uppercase tracking-wider">
+                Estimasi Total Belanja
+              </span>
+              <span className="text-base font-black text-slate-900">
+                {grandTotalPrice > 0 ? formatRupiah(grandTotalPrice) : "Belum diatur harga"}
+              </span>
+            </div>
+          </div>
+
+          {/* Share to WhatsApp Button */}
+          <button
+            onClick={handleShareWhatsApp}
+            className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold shadow-sm shadow-emerald-600/30 transition-all cursor-pointer active:scale-95"
+            title="Bagikan daftar belanja ke WhatsApp"
+          >
+            <Share2 className="w-3.5 h-3.5" />
+            WhatsApp
+          </button>
+        </div>
+
+        {totalCheckedPrice > 0 && (
+          <div className="pt-2 border-t border-slate-100 flex items-center justify-between text-xs">
+            <span className="text-slate-500 font-medium">
+              Terpilih ({checkedIds.size} barang):
+            </span>
+            <span className="font-bold text-emerald-700">
+              {formatRupiah(totalCheckedPrice)}
+            </span>
+          </div>
+        )}
+      </div>
 
       {/* Select all toggle bar */}
       <div className="flex items-center justify-between mb-4 px-1">
@@ -193,10 +296,17 @@ export default function ShoppingClient({ items }: ShoppingClientProps) {
               loading={isPending}
               fullWidth
               size="lg"
-              className="gap-2 text-sm font-bold"
+              className="gap-2 text-sm font-bold justify-between px-4"
             >
-              <Check className="w-4 h-4 stroke-[3]" />
-              Selesai Belanja ({checkedIds.size} Barang)
+              <span className="flex items-center gap-1.5">
+                <Check className="w-4 h-4 stroke-[3]" />
+                Selesai Belanja ({checkedIds.size})
+              </span>
+              {totalCheckedPrice > 0 && (
+                <span className="bg-emerald-800/40 px-2.5 py-0.5 rounded-lg text-xs font-bold">
+                  {formatRupiah(totalCheckedPrice)}
+                </span>
+              )}
             </PrimaryButton>
           </div>
         </div>

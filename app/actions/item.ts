@@ -1,9 +1,9 @@
 "use server";
 
 import { prisma } from "@/lib/prisma";
-import { StockStatus } from "@/lib/types";
+import { StockStatus, Item } from "@/lib/types";
 import { revalidatePath } from "next/cache";
-import { getNextStatus } from "@/lib/utils";
+import { getNextStatus, calculateLifespan } from "@/lib/utils";
 import { getCurrentUser } from "@/lib/auth";
 
 /** Get all items for current user, optionally filtered by search and category */
@@ -43,8 +43,14 @@ export async function getStatusCounts() {
   return { aman, menipis, habis, total: aman + menipis + habis };
 }
 
-/** Create a new item for current user */
-export async function createItem(name: string, category?: string) {
+/** Create a new item with optional lifespan, price, and barcode */
+export async function createItem(
+  name: string,
+  category?: string,
+  durationDays?: number | null,
+  estimatedPrice?: number,
+  barcode?: string | null
+) {
   if (!name.trim()) throw new Error("Nama barang tidak boleh kosong");
 
   const user = await getCurrentUser();
@@ -55,17 +61,29 @@ export async function createItem(name: string, category?: string) {
       name: name.trim(),
       category: category || null,
       userId,
+      durationDays: durationDays != null && durationDays > 0 ? durationDays : null,
+      estimatedPrice: estimatedPrice || 0,
+      barcode: barcode?.trim() || null,
     },
   });
 
   revalidatePath("/");
   revalidatePath("/inventaris");
+  revalidatePath("/belanja");
 }
 
-/** Update item name and/or category */
+/** Update item details */
 export async function updateItem(
   id: string,
-  data: { name?: string; category?: string | null }
+  data: {
+    name?: string;
+    category?: string | null;
+    status?: StockStatus;
+    durationDays?: number | null;
+    estimatedPrice?: number;
+    barcode?: string | null;
+    lastRestockedAt?: Date;
+  }
 ) {
   const user = await getCurrentUser();
   const userId = user?.id || "demo-user";
@@ -75,11 +93,25 @@ export async function updateItem(
     data: {
       ...(data.name !== undefined && { name: data.name.trim() }),
       ...(data.category !== undefined && { category: data.category }),
+      ...(data.status !== undefined && { status: data.status }),
+      ...(data.durationDays !== undefined && {
+        durationDays: data.durationDays != null && data.durationDays > 0 ? data.durationDays : null,
+      }),
+      ...(data.estimatedPrice !== undefined && {
+        estimatedPrice: data.estimatedPrice || 0,
+      }),
+      ...(data.barcode !== undefined && {
+        barcode: data.barcode?.trim() || null,
+      }),
+      ...(data.lastRestockedAt !== undefined && {
+        lastRestockedAt: data.lastRestockedAt,
+      }),
     },
   });
 
   revalidatePath("/");
   revalidatePath("/inventaris");
+  revalidatePath("/belanja");
 }
 
 /** Toggle item status (rotate: AMAN → MENIPIS → HABIS → AMAN) */
@@ -91,10 +123,18 @@ export async function toggleItemStatus(id: string) {
   if (!item) throw new Error("Barang tidak ditemukan");
 
   const newStatus = getNextStatus(item.status);
+  const updateData: { status: StockStatus; lastRestockedAt?: Date } = {
+    status: newStatus,
+  };
+
+  // If status is rotated back to AMAN, reset the countdown clock!
+  if (newStatus === StockStatus.AMAN) {
+    updateData.lastRestockedAt = new Date();
+  }
 
   await prisma.item.update({
     where: { id, userId },
-    data: { status: newStatus },
+    data: updateData,
   });
 
   revalidatePath("/");
@@ -129,4 +169,34 @@ export async function getCategories() {
   return items
     .map((i) => i.category)
     .filter((c): c is string => c !== null);
+}
+
+/** Search item by barcode */
+export async function searchByBarcode(barcode: string): Promise<Item | null> {
+  const user = await getCurrentUser();
+  const userId = user?.id || "demo-user";
+
+  const items = await prisma.item.findMany({
+    where: { barcode: barcode.trim(), userId },
+  });
+
+  return items[0] || null;
+}
+
+/** Get items that are nearing depletion or already expired based on lifespan or status */
+export async function getItemsNearingDepletion(): Promise<Item[]> {
+  const user = await getCurrentUser();
+  const userId = user?.id || "demo-user";
+
+  const items = await prisma.item.findMany({
+    where: { userId },
+  });
+
+  return items.filter((item) => {
+    if (item.status === StockStatus.HABIS || item.status === StockStatus.MENIPIS) {
+      return true;
+    }
+    const lifespan = calculateLifespan(item);
+    return lifespan.hasLifespan && (lifespan.isExpired || lifespan.isNearingEnd);
+  });
 }

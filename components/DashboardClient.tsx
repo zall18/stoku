@@ -1,19 +1,31 @@
 "use client";
 
 import { useState } from "react";
-import { Item, StockStatus, UserSession } from "@/lib/types";
+import { Item, StockStatus, UserSession, ReminderSetting } from "@/lib/types";
 import ItemCard from "@/components/ItemCard";
 import ItemFormModal from "@/components/ItemFormModal";
+import ReminderModal from "@/components/ReminderModal";
+import QuickReviewModal from "@/components/QuickReviewModal";
 import SearchBar from "@/components/ui/SearchBar";
 import PrimaryButton from "@/components/ui/PrimaryButton";
 import EmptyState from "@/components/ui/EmptyState";
-import { Plus, Package, LogOut, Sparkles, User as UserIcon } from "lucide-react";
+import {
+  Plus,
+  Package,
+  LogOut,
+  Sparkles,
+  User as UserIcon,
+  Bell,
+  Clock,
+} from "lucide-react";
 import { signOutAction } from "@/lib/auth";
 
 interface DashboardClientProps {
   items: Item[];
   statusCounts: { aman: number; menipis: number; habis: number; total: number };
   user?: UserSession | null;
+  nearingDepletionItems?: Item[];
+  reminderSetting?: ReminderSetting | null;
 }
 
 const FILTER_OPTIONS = [
@@ -27,12 +39,17 @@ export default function DashboardClient({
   items,
   statusCounts,
   user,
+  nearingDepletionItems = [],
+  reminderSetting,
 }: DashboardClientProps) {
   const [search, setSearch] = useState("");
   const [statusFilter, setStatusFilter] = useState<StockStatus | null>(null);
   const [selectedCategory, setSelectedCategory] = useState<string | null>(null);
   const [showAddModal, setShowAddModal] = useState(false);
   const [editItem, setEditItem] = useState<Item | null>(null);
+  const [showReminderModal, setShowReminderModal] = useState(false);
+  const [showQuickReviewModal, setShowQuickReviewModal] = useState(false);
+  const [initialBarcodeForAdd, setInitialBarcodeForAdd] = useState<string | null>(null);
 
   // Extract unique categories from items
   const uniqueCategories = Array.from(
@@ -67,7 +84,7 @@ export default function DashboardClient({
                   StokKu
                 </span>
                 <span className="px-1.5 py-0.5 rounded-full text-[10px] font-bold bg-emerald-100 text-emerald-700">
-                  v1.0
+                  v2.0
                 </span>
               </div>
               <p className="text-xs text-slate-500">
@@ -76,8 +93,24 @@ export default function DashboardClient({
             </div>
           </div>
 
-          {/* Account profile pill & signout */}
+          {/* Account profile pill, reminder bell & signout */}
           <div className="flex items-center gap-2">
+            {/* Reminder Setting Bell button */}
+            {reminderSetting && (
+              <button
+                type="button"
+                onClick={() => setShowReminderModal(true)}
+                className="relative p-2 rounded-xl text-slate-500 hover:text-emerald-600 hover:bg-emerald-50 transition-colors cursor-pointer"
+                title="Pengaturan Pengingat Stok"
+                aria-label="Pengaturan Pengingat"
+              >
+                <Bell className="w-4 h-4" />
+                {reminderSetting.enabled && (
+                  <span className="absolute top-1.5 right-1.5 w-2 h-2 rounded-full bg-emerald-500 ring-2 ring-white" />
+                )}
+              </button>
+            )}
+
             {user?.avatarUrl ? (
               <img
                 src={user.avatarUrl}
@@ -115,7 +148,10 @@ export default function DashboardClient({
           </div>
           <PrimaryButton
             size="sm"
-            onClick={() => setShowAddModal(true)}
+            onClick={() => {
+              setInitialBarcodeForAdd(null);
+              setShowAddModal(true);
+            }}
             className="gap-1.5"
           >
             <Plus className="w-4 h-4 stroke-[2.5]" />
@@ -123,6 +159,33 @@ export default function DashboardClient({
           </PrimaryButton>
         </div>
       </header>
+
+      {/* Nearing depletion alert banner */}
+      {nearingDepletionItems.length > 0 && (
+        <div className="px-4 mb-4 max-w-2xl mx-auto w-full">
+          <div className="glass p-3.5 rounded-2xl border border-amber-200/90 bg-gradient-to-r from-amber-50/90 via-orange-50/80 to-amber-50/90 shadow-sm flex items-center justify-between gap-3">
+            <div className="flex items-center gap-2.5 min-w-0">
+              <div className="w-8 h-8 rounded-xl bg-amber-500 text-white flex items-center justify-center shrink-0 shadow-xs">
+                <Clock className="w-4 h-4" />
+              </div>
+              <div className="min-w-0">
+                <p className="text-xs font-bold text-amber-950 truncate">
+                  {nearingDepletionItems.length} barang diprediksi perlu dicek
+                </p>
+                <p className="text-[11px] text-amber-700 truncate">
+                  Mendekati habis berdasarkan estimasi durasi
+                </p>
+              </div>
+            </div>
+            <button
+              onClick={() => setShowQuickReviewModal(true)}
+              className="px-3 py-1.5 rounded-xl bg-amber-600 hover:bg-amber-700 text-white text-xs font-bold shadow-xs transition-all shrink-0 cursor-pointer"
+            >
+              Review Cepat
+            </button>
+          </div>
+        </div>
+      )}
 
       {/* Status summary cards (with colored glow shadows) */}
       <div className="px-4 mb-5 max-w-2xl mx-auto w-full">
@@ -187,6 +250,22 @@ export default function DashboardClient({
           value={search}
           onChange={setSearch}
           placeholder="Cari sabun, kopi, air galon..."
+          onScanBarcode={(code) => {
+            const matched = items.find((i) => i.barcode === code);
+            if (matched) {
+              setSearch(matched.name);
+            } else {
+              if (
+                typeof window !== "undefined" &&
+                window.confirm(
+                  `Barcode "${code}" belum terdaftar pada barang manapun. Tambahkan sebagai barang baru?`
+                )
+              ) {
+                setInitialBarcodeForAdd(code);
+                setShowAddModal(true);
+              }
+            }
+          }}
         />
 
         {/* Status filter pills */}
@@ -300,9 +379,29 @@ export default function DashboardClient({
         onClose={() => {
           setShowAddModal(false);
           setEditItem(null);
+          setInitialBarcodeForAdd(null);
         }}
         editItem={editItem}
+        initialBarcode={initialBarcodeForAdd}
       />
+
+      {/* Reminder Modal */}
+      {reminderSetting && (
+        <ReminderModal
+          isOpen={showReminderModal}
+          onClose={() => setShowReminderModal(false)}
+          setting={reminderSetting}
+        />
+      )}
+
+      {/* Quick Review Modal */}
+      {nearingDepletionItems.length > 0 && (
+        <QuickReviewModal
+          isOpen={showQuickReviewModal}
+          onClose={() => setShowQuickReviewModal(false)}
+          items={nearingDepletionItems}
+        />
+      )}
     </>
   );
 }

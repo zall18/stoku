@@ -1,4 +1,4 @@
-import { StockStatus } from "@/lib/types";
+import { StockStatus, Item, LifespanInfo } from "@/lib/types";
 
 /** Maps StockStatus enum to Tailwind color classes and bright glassmorphism tokens */
 export const STATUS_CONFIG = {
@@ -62,6 +62,90 @@ export const CATEGORIES = [
 ] as const;
 
 export type Category = (typeof CATEGORIES)[number];
+
+/** Lifespan Preset Options */
+export const LIFESPAN_PRESETS = [
+  { days: 7, label: "1 Minggu" },
+  { days: 14, label: "2 Minggu" },
+  { days: 30, label: "1 Bulan" },
+] as const;
+
+/** Calculate lifespan countdown and progress */
+export function calculateLifespan(item: Item): LifespanInfo {
+  if (!item.durationDays || item.durationDays <= 0) {
+    return {
+      hasLifespan: false,
+      durationDays: null,
+      elapsedDays: 0,
+      remainingDays: 0,
+      percentUsed: 0,
+      isExpired: false,
+      isNearingEnd: false,
+      label: "",
+      badgeColor: "",
+      barColor: "",
+    };
+  }
+
+  const baseDate = item.lastRestockedAt
+    ? new Date(item.lastRestockedAt)
+    : new Date(item.createdAt);
+  const now = new Date();
+  const diffMs = now.getTime() - baseDate.getTime();
+  const elapsedDays = Math.max(0, Math.floor(diffMs / (1000 * 60 * 60 * 24)));
+  const remainingDays = item.durationDays - elapsedDays;
+  const percentUsed = Math.min(
+    100,
+    Math.max(0, Math.round((elapsedDays / item.durationDays) * 100))
+  );
+
+  const isExpired = remainingDays <= 0;
+  const isNearingEnd = !isExpired && (remainingDays <= 2 || percentUsed >= 75);
+
+  let label = "";
+  let badgeColor = "";
+  let barColor = "";
+
+  if (isExpired) {
+    const overdue = Math.abs(remainingDays);
+    label = overdue === 0 ? "Habis hari ini!" : `Lewat ${overdue} hari`;
+    badgeColor = "text-rose-700 bg-rose-50 border-rose-200";
+    barColor = "bg-rose-500";
+  } else if (isNearingEnd) {
+    label = `Sisa ${remainingDays} hari`;
+    badgeColor = "text-amber-800 bg-amber-50 border-amber-200";
+    barColor = "bg-amber-500";
+  } else {
+    label = `Sisa ${remainingDays} hari`;
+    badgeColor = "text-emerald-700 bg-emerald-50 border-emerald-200";
+    barColor = "bg-emerald-500";
+  }
+
+  return {
+    hasLifespan: true,
+    durationDays: item.durationDays,
+    elapsedDays,
+    remainingDays,
+    percentUsed,
+    isExpired,
+    isNearingEnd,
+    label,
+    badgeColor,
+    barColor,
+  };
+}
+
+/** Format currency to Indonesian Rupiah */
+export function formatRupiah(amount: number): string {
+  if (!amount || amount === 0) return "Rp 0";
+  return new Intl.NumberFormat("id-ID", {
+    style: "currency",
+    currency: "IDR",
+    maximumFractionDigits: 0,
+  })
+    .format(amount)
+    .replace(/\s+/g, " ");
+}
 
 /** Format relative time in Indonesian */
 export function formatRelativeTime(date: Date): string {

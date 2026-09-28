@@ -3,8 +3,8 @@ import { getCurrentUser } from "@/lib/auth";
 import { redirect } from "next/navigation";
 import BottomNav from "@/components/BottomNav";
 import EmptyState from "@/components/ui/EmptyState";
-import { formatDateGroup, formatRelativeTime } from "@/lib/utils";
-import { Clock, RefreshCcw } from "lucide-react";
+import { formatDateGroup, formatRelativeTime, formatRupiah } from "@/lib/utils";
+import { Clock, RefreshCcw, Tag } from "lucide-react";
 import type { Metadata } from "next";
 
 export const metadata: Metadata = {
@@ -55,47 +55,70 @@ export default async function RiwayatPage() {
           />
         ) : (
           <div className="space-y-6 stagger-children">
-            {Array.from(grouped.entries()).map(([dateKey, dateLogs]) => (
-              <div key={dateKey}>
-                {/* Date header */}
-                <div className="flex items-center gap-2 mb-3 px-1">
-                  <span className="text-xs font-bold text-slate-700 tracking-wide uppercase">
-                    {dateKey}
-                  </span>
-                  <div className="flex-1 h-px bg-slate-200" />
-                  <span className="text-[11px] font-semibold text-slate-400">
-                    {dateLogs.length} barang
-                  </span>
-                </div>
+            {Array.from(grouped.entries()).map(([dateKey, dateLogs]) => {
+              const totalCost = dateLogs.reduce(
+                (sum, l) => sum + (l.priceAtRestock || l.item.estimatedPrice || 0),
+                0
+              );
 
-                {/* Log entries */}
-                <div className="space-y-2">
-                  {dateLogs.map((log) => (
-                    <div
-                      key={log.id}
-                      className="glass rounded-2xl p-3.5 flex items-center gap-3.5 shadow-xs hover:shadow-md transition-all"
-                    >
-                      <div className="w-9 h-9 rounded-xl bg-emerald-50 border border-emerald-200/80 flex items-center justify-center shrink-0 shadow-xs">
-                        <RefreshCcw className="w-4 h-4 text-emerald-600" />
-                      </div>
-                      <div className="flex-1 min-w-0">
-                        <span className="text-sm font-bold text-slate-800 block truncate">
-                          {log.item.name}
+              return (
+                <div key={dateKey}>
+                  {/* Date header */}
+                  <div className="flex items-center gap-2 mb-3 px-1">
+                    <span className="text-xs font-bold text-slate-700 tracking-wide uppercase">
+                      {dateKey}
+                    </span>
+                    <div className="flex-1 h-px bg-slate-200" />
+                    <span className="text-[11px] font-semibold text-slate-500">
+                      {dateLogs.length} barang
+                      {totalCost > 0 && (
+                        <span className="ml-1 text-emerald-700 font-bold">
+                          • {formatRupiah(totalCost)}
                         </span>
-                        {log.item.category && (
-                          <span className="text-[11px] font-medium text-slate-500">
-                            {log.item.category}
+                      )}
+                    </span>
+                  </div>
+
+                  {/* Log entries */}
+                  <div className="space-y-2">
+                    {dateLogs.map((log) => {
+                      const price = log.priceAtRestock || log.item.estimatedPrice || 0;
+
+                      return (
+                        <div
+                          key={log.id}
+                          className="glass rounded-2xl p-3.5 flex items-center gap-3.5 shadow-xs hover:shadow-md transition-all"
+                        >
+                          <div className="w-9 h-9 rounded-xl bg-emerald-50 border border-emerald-200/80 flex items-center justify-center shrink-0 shadow-xs">
+                            <RefreshCcw className="w-4 h-4 text-emerald-600" />
+                          </div>
+                          <div className="flex-1 min-w-0">
+                            <div className="flex items-center gap-2">
+                              <span className="text-sm font-bold text-slate-800 truncate">
+                                {log.item.name}
+                              </span>
+                              {price > 0 && (
+                                <span className="inline-flex items-center text-[11px] font-bold text-emerald-700 bg-emerald-100/90 px-1.5 py-0.5 rounded-md shrink-0">
+                                  {formatRupiah(price)}
+                                </span>
+                              )}
+                            </div>
+                            {log.item.category && (
+                              <span className="text-[11px] font-medium text-slate-500 block truncate">
+                                {log.item.category}
+                              </span>
+                            )}
+                          </div>
+                          <span className="text-[11px] font-semibold text-slate-400 shrink-0">
+                            {formatRelativeTime(new Date(log.restockedAt))}
                           </span>
-                        )}
-                      </div>
-                      <span className="text-[11px] font-semibold text-slate-400 shrink-0">
-                        {formatRelativeTime(new Date(log.restockedAt))}
-                      </span>
-                    </div>
-                  ))}
+                        </div>
+                      );
+                    })}
+                  </div>
                 </div>
-              </div>
-            ))}
+              );
+            })}
           </div>
         )}
       </div>

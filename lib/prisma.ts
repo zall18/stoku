@@ -1,7 +1,7 @@
 import { Pool, PoolClient } from "pg";
 
 export * from "./types";
-import { StockStatus, Item, RestockLog } from "./types";
+import { StockStatus, Item, RestockLog, ReminderSetting, ReminderFrequency } from "./types";
 
 const connectionString =
   process.env.DATABASE_URL ||
@@ -35,6 +35,10 @@ function mapItemRow(row: Record<string, unknown>): Item {
     category: row.category ? String(row.category) : null,
     createdAt: new Date(row.createdAt as string | Date),
     updatedAt: new Date(row.updatedAt as string | Date),
+    durationDays: row.durationDays != null ? Number(row.durationDays) : null,
+    lastRestockedAt: row.lastRestockedAt ? new Date(row.lastRestockedAt as string | Date) : null,
+    estimatedPrice: Number(row.estimatedPrice || 0),
+    barcode: row.barcode ? String(row.barcode) : null,
   };
 }
 
@@ -50,6 +54,7 @@ function createItemClient(client: QueryRunner) {
         name?: { contains?: string; mode?: string };
         category?: string | { not: null };
         status?: { in?: StockStatus[] } | StockStatus;
+        barcode?: string;
       };
       orderBy?: Array<Record<string, "asc" | "desc">>;
       select?: { category?: boolean };
@@ -62,6 +67,10 @@ function createItemClient(client: QueryRunner) {
         if (args.where.userId) {
           values.push(args.where.userId);
           conditions.push(`"userId" = $${values.length}`);
+        }
+        if (args.where.barcode) {
+          values.push(args.where.barcode);
+          conditions.push(`"barcode" = $${values.length}`);
         }
         if (args.where.name?.contains) {
           values.push(`%${args.where.name.contains}%`);
@@ -176,20 +185,40 @@ function createItemClient(client: QueryRunner) {
     },
 
     async create(args: {
-      data: { name: string; category?: string | null; status?: StockStatus; userId?: string };
+      data: {
+        name: string;
+        category?: string | null;
+        status?: StockStatus;
+        userId?: string;
+        durationDays?: number | null;
+        estimatedPrice?: number;
+        barcode?: string | null;
+      };
     }): Promise<Item> {
       const userId = args.data.userId || "demo-user";
+      const durationDays = args.data.durationDays != null ? args.data.durationDays : null;
+      const estimatedPrice = args.data.estimatedPrice || 0;
+      const barcode = args.data.barcode || null;
+
       const res = await client.query(
-        `INSERT INTO "Item" ("name", "category", "status", "userId", "updatedAt") 
-         VALUES ($1, $2, $3, $4, NOW()) RETURNING *;`,
-        [args.data.name, args.data.category || null, args.data.status || StockStatus.AMAN, userId]
+        `INSERT INTO "Item" ("name", "category", "status", "userId", "durationDays", "estimatedPrice", "barcode", "lastRestockedAt", "updatedAt") 
+         VALUES ($1, $2, $3, $4, $5, $6, $7, NOW(), NOW()) RETURNING *;`,
+        [args.data.name, args.data.category || null, args.data.status || StockStatus.AMAN, userId, durationDays, estimatedPrice, barcode]
       );
       return mapItemRow(res.rows[0]);
     },
 
     async update(args: {
       where: { id: string; userId?: string };
-      data: { name?: string; category?: string | null; status?: StockStatus };
+      data: {
+        name?: string;
+        category?: string | null;
+        status?: StockStatus;
+        durationDays?: number | null;
+        estimatedPrice?: number;
+        barcode?: string | null;
+        lastRestockedAt?: Date;
+      };
     }): Promise<Item> {
       const setParts: string[] = ['"updatedAt" = NOW()'];
       const values: unknown[] = [];
@@ -205,6 +234,22 @@ function createItemClient(client: QueryRunner) {
       if (args.data.status !== undefined) {
         values.push(args.data.status);
         setParts.push(`"status" = $${values.length}`);
+      }
+      if (args.data.durationDays !== undefined) {
+        values.push(args.data.durationDays);
+        setParts.push(`"durationDays" = $${values.length}`);
+      }
+      if (args.data.estimatedPrice !== undefined) {
+        values.push(args.data.estimatedPrice);
+        setParts.push(`"estimatedPrice" = $${values.length}`);
+      }
+      if (args.data.barcode !== undefined) {
+        values.push(args.data.barcode);
+        setParts.push(`"barcode" = $${values.length}`);
+      }
+      if (args.data.lastRestockedAt !== undefined) {
+        values.push(args.data.lastRestockedAt);
+        setParts.push(`"lastRestockedAt" = $${values.length}`);
       }
 
       values.push(args.where.id);
@@ -226,13 +271,22 @@ function createItemClient(client: QueryRunner) {
 
     async updateMany(args: {
       where: { id: { in: string[] }; userId?: string };
-      data: { status?: StockStatus };
+      data: { status?: StockStatus; lastRestockedAt?: Date };
     }): Promise<{ count: number }> {
       if (!args.where.id.in || args.where.id.in.length === 0) {
         return { count: 0 };
       }
       const status = args.data.status || StockStatus.AMAN;
       const values: unknown[] = [status, args.where.id.in];
+      let setClause = `"status" = $1, "updatedAt" = NOW()`;
+
+      if (args.data.lastRestockedAt !== undefined) {
+        values.push(args.data.lastRestockedAt);
+        setClause += `, "lastRestockedAt" = $${values.length}`;
+      } else if (status === StockStatus.AMAN) {
+        setClause += `, "lastRestockedAt" = NOW()`;
+      }
+
       let whereClause = `"id" = ANY($2::text[])`;
 
       if (args.where.userId) {
@@ -241,7 +295,7 @@ function createItemClient(client: QueryRunner) {
       }
 
       const res = await client.query(
-        `UPDATE "Item" SET "status" = $1, "updatedAt" = NOW() WHERE ${whereClause} RETURNING "id";`,
+        `UPDATE "Item" SET ${setClause} WHERE ${whereClause} RETURNING "id";`,
         values
       );
       return { count: res.rows.length };
@@ -267,15 +321,15 @@ function createItemClient(client: QueryRunner) {
 function createRestockLogClient(client: QueryRunner) {
   return {
     async createMany(args: {
-      data: Array<{ itemId: string; userId?: string }>;
+      data: Array<{ itemId: string; userId?: string; priceAtRestock?: number }>;
     }): Promise<{ count: number }> {
       if (!args.data || args.data.length === 0) return { count: 0 };
       let inserted = 0;
       for (const d of args.data) {
         await client.query(
-          `INSERT INTO "RestockLog" ("itemId", "userId", "restockedAt")
-           VALUES ($1, $2, NOW());`,
-          [d.itemId, d.userId || "demo-user"]
+          `INSERT INTO "RestockLog" ("itemId", "userId", "priceAtRestock", "restockedAt")
+           VALUES ($1, $2, $3, NOW());`,
+          [d.itemId, d.userId || "demo-user", d.priceAtRestock || 0]
         );
         inserted++;
       }
@@ -284,7 +338,7 @@ function createRestockLogClient(client: QueryRunner) {
 
     async findMany(args?: {
       where?: { userId?: string };
-      include?: { item?: { select?: { name?: boolean; category?: boolean } } };
+      include?: { item?: { select?: { name?: boolean; category?: boolean; estimatedPrice?: boolean } } };
       orderBy?: { restockedAt?: "asc" | "desc" };
       take?: number;
     }): Promise<RestockLog[]> {
@@ -307,9 +361,11 @@ function createRestockLogClient(client: QueryRunner) {
           r.id, 
           r."userId",
           r."itemId", 
+          r."priceAtRestock",
           r."restockedAt",
           i.name as item_name,
-          i.category as item_category
+          i.category as item_category,
+          i."estimatedPrice" as item_price
         FROM "RestockLog" r
         JOIN "Item" i ON r."itemId" = i.id
         ${whereClause}
@@ -322,12 +378,80 @@ function createRestockLogClient(client: QueryRunner) {
         id: String(row.id),
         userId: String(row.userId || "demo-user"),
         itemId: String(row.itemId),
+        priceAtRestock: Number(row.priceAtRestock || 0),
         restockedAt: new Date(row.restockedAt as string | Date),
         item: {
           name: String(row.item_name),
           category: row.item_category ? String(row.item_category) : null,
+          estimatedPrice: Number(row.item_price || 0),
         },
       }));
+    },
+  };
+}
+
+function createReminderSettingClient(client: QueryRunner) {
+  return {
+    async findUnique(args: { where: { userId: string } }): Promise<ReminderSetting | null> {
+      const res = await client.query(
+        `SELECT * FROM "ReminderSetting" WHERE "userId" = $1 LIMIT 1;`,
+        [args.where.userId]
+      );
+      if (res.rows.length === 0) return null;
+      const r = res.rows[0];
+      return {
+        userId: String(r.userId),
+        enabled: Boolean(r.enabled),
+        frequency: r.frequency as ReminderFrequency,
+        reminderTime: String(r.reminderTime || "20:00"),
+        weekendReminderTime: String(r.weekendReminderTime || "09:00"),
+        updatedAt: new Date(r.updatedAt as string | Date),
+      };
+    },
+
+    async upsert(args: {
+      where: { userId: string };
+      create: {
+        userId: string;
+        enabled?: boolean;
+        frequency?: ReminderFrequency;
+        reminderTime?: string;
+        weekendReminderTime?: string;
+      };
+      update: {
+        enabled?: boolean;
+        frequency?: ReminderFrequency;
+        reminderTime?: string;
+        weekendReminderTime?: string;
+      };
+    }): Promise<ReminderSetting> {
+      const userId = args.where.userId;
+      const enabled = args.update.enabled ?? args.create.enabled ?? true;
+      const frequency = args.update.frequency ?? args.create.frequency ?? "DAILY_EVENING";
+      const reminderTime = args.update.reminderTime ?? args.create.reminderTime ?? "20:00";
+      const weekendReminderTime = args.update.weekendReminderTime ?? args.create.weekendReminderTime ?? "09:00";
+
+      const res = await client.query(
+        `INSERT INTO "ReminderSetting" ("userId", "enabled", "frequency", "reminderTime", "weekendReminderTime", "updatedAt")
+         VALUES ($1, $2, $3, $4, $5, NOW())
+         ON CONFLICT ("userId") DO UPDATE SET
+           "enabled" = EXCLUDED."enabled",
+           "frequency" = EXCLUDED."frequency",
+           "reminderTime" = EXCLUDED."reminderTime",
+           "weekendReminderTime" = EXCLUDED."weekendReminderTime",
+           "updatedAt" = NOW()
+         RETURNING *;`,
+        [userId, enabled, frequency, reminderTime, weekendReminderTime]
+      );
+      const r = res.rows[0];
+      return {
+        userId: String(r.userId),
+        enabled: Boolean(r.enabled),
+        frequency: r.frequency as ReminderFrequency,
+        reminderTime: String(r.reminderTime || "20:00"),
+        weekendReminderTime: String(r.weekendReminderTime || "09:00"),
+        updatedAt: new Date(r.updatedAt as string | Date),
+      };
     },
   };
 }
@@ -335,10 +459,12 @@ function createRestockLogClient(client: QueryRunner) {
 export const prisma = {
   item: createItemClient(pool),
   restockLog: createRestockLogClient(pool),
+  reminderSetting: createReminderSettingClient(pool),
 
   async $transaction<T>(callback: (tx: {
     item: ReturnType<typeof createItemClient>;
     restockLog: ReturnType<typeof createRestockLogClient>;
+    reminderSetting: ReturnType<typeof createReminderSettingClient>;
   }) => Promise<T>): Promise<T> {
     const client: PoolClient = await pool.connect();
     try {
@@ -346,6 +472,7 @@ export const prisma = {
       const tx = {
         item: createItemClient(client),
         restockLog: createRestockLogClient(client),
+        reminderSetting: createReminderSettingClient(client),
       };
       const result = await callback(tx);
       await client.query("COMMIT");
