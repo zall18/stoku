@@ -1,0 +1,32 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider  = "postgresql"
+  url       = env("DATABASE_URL")
+  directUrl = env("DIRECT_URL")
+}
+
+model Item {
+  id        String      @id @default(uuid())
+  name      String
+  status    StockStatus @default(AMAN)
+  category  String?
+  createdAt DateTime    @default(now())
+  updatedAt DateTime    @updatedAt
+  logs      RestockLog[]
+}
+
+enum StockStatus {
+  AMAN
+  MENIPIS
+  HABIS
+}
+
+model RestockLog {
+  id          String   @id @default(uuid())
+  itemId      String
+  item        Item     @relation(fields: [itemId], references: [id], onDelete: Cascade)
+  restockedAt DateTime @default(now())
+}
