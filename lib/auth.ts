@@ -1,7 +1,7 @@
 "use server";
 
 import { createClient } from "@/lib/supabase/server";
-import { cookies } from "next/headers";
+import { cookies, headers } from "next/headers";
 import { UserSession } from "@/lib/types";
 import { redirect } from "next/navigation";
 
@@ -52,8 +52,17 @@ export async function getCurrentUser(): Promise<UserSession | null> {
 /** Action to start Google OAuth flow */
 export async function signInWithGoogleAction(redirectTo?: string) {
   const supabase = await createClient();
-  const origin = process.env.NEXT_PUBLIC_SITE_URL || "http://localhost:3000";
-  const targetRedirect = `${origin}/auth/callback?next=${encodeURIComponent(redirectTo || "/inventaris")}`;
+  const headerList = await headers();
+  const host = headerList.get("x-forwarded-host") || headerList.get("host");
+  const proto =
+    headerList.get("x-forwarded-proto") ||
+    (host?.includes("localhost") ? "http" : "https");
+  const detectedOrigin = host ? `${proto}://${host}` : null;
+  const origin =
+    process.env.NEXT_PUBLIC_SITE_URL || detectedOrigin || "http://localhost:3000";
+  const targetRedirect = `${origin}/auth/callback?next=${encodeURIComponent(
+    redirectTo || "/inventaris"
+  )}`;
 
   const { data, error } = await supabase.auth.signInWithOAuth({
     provider: "google",
